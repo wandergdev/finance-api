@@ -10,7 +10,7 @@ roles y 2FA por TOTP). Este servicio solo los verifica.
 
 - Node.js + TypeScript (Express 5)
 - Prisma ORM 7 + PostgreSQL (driver adapter `@prisma/adapter-pg`)
-- Verificación de JWT (HS256) emitidos por `auth-system-dotnet`
+- Verificación de JWT (RS256, clave pública vía JWKS) emitidos por `auth-system-dotnet`
 - Validación de requests con `zod`
 - Docker Compose para levantar Postgres en local
 
@@ -28,7 +28,7 @@ dotnet run                 # http://localhost:5073 (el puerto lo fija su launchS
 **2. Esta API:**
 
 ```bash
-cp .env.example .env       # JWT_SECRET debe ser el mismo Jwt:Secret del auth-system
+cp .env.example .env       # AUTH_SERVICE_URL apunta al auth-system (http://localhost:5073)
 docker compose up -d       # levanta Postgres en localhost:5433
 npm install
 npm run prisma:migrate     # crea las tablas
@@ -42,7 +42,7 @@ npm run dev                # http://localhost:4000
 curl -X POST http://localhost:5073/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"Password1"}'
-# -> { "tokens": { "accessToken": "...", "refreshToken": "...", ... } }
+# -> { "accessToken": "...", "refreshToken": "...", "accessTokenExpiresAtUtc": "..." }
 
 # 2. Ese accessToken se usa aquí
 curl http://localhost:4000/api/transactions \
@@ -85,12 +85,27 @@ Todas las rutas bajo `/api` requieren `Authorization: Bearer <accessToken>` y so
 
 ## Autenticación: cómo se valida el token
 
-`requireAuth` verifica firma (HS256), `issuer` y `audience`, y exige los claims `sub` y `email`.
-Las tres variables (`JWT_SECRET`, `JWT_ISSUER`, `JWT_AUDIENCE`) tienen que coincidir con la
-sección `Jwt` del auth-system.
+Los tokens se firman con **RS256**. La clave privada vive solo en `auth-system-dotnet`; esta API
+obtiene la pública de su JWKS y únicamente verifica:
 
-> **Nota sobre el secreto JWT:** ambos servicios comparten la misma llave simétrica, así que
-> técnicamente cualquiera de los dos podría emitir tokens válidos. Para producción, lo correcto
-> es pasar a RS256 (el auth-system firma con la clave privada, esta API valida con la pública).
-> El secreto de desarrollo está publicado en el repo del auth-system: rótalo antes de cualquier
-> despliegue y pásalo por variable de entorno gestionada por la plataforma.
+```
+GET <AUTH_SERVICE_URL>/.well-known/jwks.json          # público, sin auth
+GET <AUTH_SERVICE_URL>/.well-known/openid-configuration
+```
+
+`requireAuth` lee el `kid` del header del token, pide esa llave al JWKS y verifica firma,
+`issuer`, `audience` y `exp` (con `clockTolerance` de 30s, igual que el ClockSkew del emisor),
+exigiendo además los claims `sub` y `email`.
+
+La verificación fija `algorithms: ["RS256"]` a propósito: si el `alg` del header pudiera decidir
+cómo se valida, un atacante podría ponerlo en `none` o firmar con HMAC usando como secreto la
+clave pública — que ahora es pública por diseño. Es el ataque de confusión de algoritmo.
+
+Las llaves del JWKS se cachean una hora (`cache: true`, `cacheMaxAge: 3600000`, `rateLimit: true`)
+en un cliente a nivel de módulo, así que no se llama al auth-system en cada request. Si el
+auth-system está caído, los tokens siguen validándose mientras la llave esté en caché; una vez
+expira y el JWKS sigue inalcanzable, la verificación falla y las rutas protegidas responden 401.
+
+Variables relacionadas: `AUTH_SERVICE_URL` (obligatoria), `JWT_ISSUER` y `JWT_AUDIENCE` — estas
+dos tienen que coincidir con la sección `Jwt` del auth-system. Esta API ya no guarda ningún
+secreto de firma, así que no puede emitir tokens.

@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
+import { JwksClient } from "jwks-rsa";
 import { Prisma } from "../generated/prisma/client.js";
 import { env } from "../lib/env.js";
 import { prisma } from "../lib/prisma.js";
@@ -11,6 +12,29 @@ declare global {
       userId?: string;
     }
   }
+}
+
+/**
+ * Cliente JWKS a nivel de módulo: cachea las llaves públicas del emisor para no golpear a
+ * auth-system-dotnet en cada request. Con `cacheMaxAge` una llave se reusa una hora.
+ */
+const jwksClient = new JwksClient({
+  jwksUri: env.jwksUri,
+  cache: true,
+  cacheMaxAge: 3_600_000,
+  rateLimit: true,
+});
+
+/** Resuelve la pública RSA que corresponde al `kid` del header del token. */
+async function getSigningKey(token: string): Promise<string> {
+  const decoded = jwt.decode(token, { complete: true });
+  const kid = decoded?.header.kid;
+  if (!kid) {
+    throw new UnauthorizedError("Token inválido o expirado.");
+  }
+
+  const key = await jwksClient.getSigningKey(kid);
+  return key.getPublicKey();
 }
 
 /** ClaimTypes.Email; auth-system-dotnet emits both the short and the long form. */
@@ -53,10 +77,14 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
 
   let payload: AccessTokenPayload;
   try {
-    payload = jwt.verify(token, env.jwtSecret, {
-      algorithms: ["HS256"],
+    const publicKey = await getSigningKey(token);
+    // `algorithms` fija RS256: sin esa lista, el `alg` del header decidiría cómo se verifica y
+    // un atacante podría usar `none` o firmar con HMAC usando la pública como secreto.
+    payload = jwt.verify(token, publicKey, {
+      algorithms: ["RS256"],
       issuer: env.jwtIssuer,
       audience: env.jwtAudience,
+      clockTolerance: 30,
     }) as AccessTokenPayload;
   } catch {
     throw new UnauthorizedError("Token inválido o expirado.");
