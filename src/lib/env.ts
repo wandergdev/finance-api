@@ -10,6 +10,8 @@ function required(name: string): string {
 
 export const env = {
   port: Number(process.env.PORT ?? 4000),
+  /** Shared signing key with auth-system-dotnet (Jwt:Secret). This API only verifies tokens. */
   jwtSecret: required("JWT_SECRET"),
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "7d",
+  jwtIssuer: process.env.JWT_ISSUER ?? "AuthSystem",
+  jwtAudience: process.env.JWT_AUDIENCE ?? "AuthSystem.Clients",
 };

@@ -3,7 +3,6 @@ import express from "express";
 import helmet from "helmet";
 import { requireAuth } from "./middleware/auth.middleware.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
-import { authRouter } from "./modules/auth/auth.routes.js";
 import { budgetsRouter } from "./modules/budgets/budgets.routes.js";
 import { categoriesRouter } from "./modules/categories/categories.routes.js";
 import { reportsRouter } from "./modules/reports/reports.routes.js";
@@ -18,7 +17,6 @@ export function createApp() {
 
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
-  app.use("/api/auth", authRouter);
   app.use("/api/categories", requireAuth, categoriesRouter);
   app.use("/api/transactions", requireAuth, transactionsRouter);
   app.use("/api/budgets", requireAuth, budgetsRouter);

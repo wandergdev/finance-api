@@ -15,11 +15,13 @@ enum TransactionType {
   EXPENSE
 }
 
+/// Mirror of the identity owned by auth-system-dotnet: rows are created on first
+/// authenticated request, using the `sub` claim as the primary key. Credentials
+/// (password, refresh tokens, 2FA) live in that service, never here.
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  createdAt    DateTime @default(now())
+  id        String   @id
+  email     String   @unique
+  createdAt DateTime @default(now())
 
   categories   Category[]
   transactions Transaction[]
